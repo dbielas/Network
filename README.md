@@ -97,22 +97,20 @@ flowchart TB
 
 ### IP Addressing Schema
 
-| Device | Interface | IP Address | Subnet Mask | Purpose / Mapping |
-| :--- | :--- | :--- | :--- | :--- |
-| **HQ-EDGE-01** | `GigabitEthernet0/0` | `203.0.113.2` | `255.255.255.252` | Outside WAN Link (Next Hop: `203.0.113.1`) |
-| | `GigabitEthernet0/1` | `10.10.0.1` | `255.255.255.252` | L3 Transit Link to HQ-CORE-01 |
-| | `GigabitEthernet0/2` | `172.16.50.1` | `255.255.255.0` | Default Gateway for DMZ Segment |
-| | `Tunnel0` | `192.168.100.1` | `255.255.255.252` | GRE Tunnel to Branch |
-| **HQ-CORE-01** | `GigabitEthernet0/1` | `10.10.0.2` | `255.255.255.252` | L3 Transit Link to HQ-EDGE-01 |
-| | `Vlan10` | `10.10.10.1` | `255.255.255.0` | Default Gateway for HQ Data Subnet |
-| | `Vlan20` | `10.10.20.1` | `255.255.255.0` | Default Gateway for HQ Voice Subnet |
-| | `Vlan99` | `10.10.99.1` | `255.255.255.0` | Default Gateway for HQ Management / Servers |
-| **BR-EDGE-01** | `GigabitEthernet0/0` | `198.51.100.2` | `255.255.255.252` | Outside WAN Link (Next Hop: `198.51.100.1`) |
-| | `GigabitEthernet0/1` | `10.20.10.1` | `255.255.255.0` | Default Gateway for Branch LAN |
-| | `Tunnel0` | `192.168.100.2` | `255.255.255.252` | GRE Tunnel to HQ |
-| **HQ-DMZ-SRV-01**| `NIC` | `172.16.50.10` | `255.255.255.0` | Public Web/App Server (Static NAT: `203.0.113.10`) |
-| **HQ-SRV-01** | `NIC` | `10.10.99.10` | `255.255.255.0` | Central Management, DNS, Syslog |
-| **PC-HQ-01** | `NIC` | `10.10.10.50` | `255.255.255.0` | Internal Corporate Workstation |
+| Segment / Link | Devices Connected | Network | Interface Roles |
+| :--- | :--- | :--- | :--- |
+| **ISP Interconnect** | `ISP1` $\leftrightarrow$ `ISP2` | `172.16.0.0/30` | eBGP Transit (`AS 65100` $\leftrightarrow$ `AS 65200`) |
+| **HQ WAN 1** | `HQ-EDGE-01` $\leftrightarrow$ `ISP1` | `203.0.113.0/30` | Primary public WAN uplink |
+| **HQ WAN 2** | `HQ-EDGE-02` $\leftrightarrow$ `ISP1` | `203.0.113.4/30` | Secondary public WAN uplink |
+| **HQ Transit 1 (Tunnel0)** | `HQ-EDGE-01` $\leftrightarrow$ `BR-EDGE-01` | `203.0.113.2` (`10.255.0.0/30`) | Primary point-to-point GRE tunnel |
+| **HQ Transit 2 (Tunnel1)** | `HQ-EDGE-02` $\leftrightarrow$ `BR-EDGE-01` | `203.0.113.6` (`10.255.0.4/30`) | Redundant point-to-point GRE tunnel |
+| **HQ DMZ** | `HQ-EDGE-01` $\leftrightarrow$ `HQ-DMZ-SRV-01` | `172.16.50.0/24` | Isolated DMZ subnet |
+| **HQ Data (VLAN 10)** | `HQ-CORE-01` $\leftrightarrow$ `HQ-ACC-01` $\leftrightarrow$ `PC-HQ-01` | `10.10.10.0/24` | Client access via `Po1` trunk |
+| **HQ VoIP (VLAN 20)** | `HQ-CORE-01` $\leftrightarrow$ `HQ-ACC-01` $\leftrightarrow$ | `10.10.20.0/24` | Client access via `Po1` trunk |
+| **HQ Mgmt/Srv (VLAN 99)** | `HQ-CORE-01` $\leftrightarrow$ `HQ-ACC-02` $\leftrightarrow$ `HQ-SRV-01` | `10.10.99.0/24` | Infrastructure services via `Po2` trunk |
+| **Public Service** | `ISP2` $\leftrightarrow$ `INET-WEB-01` | `8.8.8.0/24` | Public internet web service host |
+| **Branch WAN** | `ISP2` $\leftrightarrow$ `BR-EDGE-01` | `198.51.100.0/30` | Branch public internet breakout |
+| **Branch LAN** | `BR-EDGE-01` $\leftrightarrow$ `BR-ACC-01` $\leftrightarrow$ `PC1` | `10.20.10.0/24` | Branch client access network |
 
 ---
 
@@ -125,7 +123,7 @@ flowchart TB
   * **Root Placement:** `HQ-CORE-01` serves as the primary root bridge across all active VLANs (`spanning-tree vlan 10,20,99 priority 4096`).
   * **Root Guard:** Applied on all downstream-facing distribution switchports (`HQ-CORE-01` $\rightarrow$ `HQ-ACC-01/02`) to prevent rogue root takeovers.
   * **Edge Hardening:** Host-facing switchports operate with `spanning-tree portfast` enabled to bypass listening/learning phases. BPDU Guard is globally active to error-disable ports if rogue switches are attached.
-* **Access Port Security:** Configured via `switchport port-security` using `mac-address sticky`, a maximum of 2 allowed addresses per port, and a `restrict` violation action.
+* **Access Port Security:** Configured via `switchport port-security` using `mac-address sticky`, a maximum of 2 allowed addresses per port, and a `shutdown` violation action.
 
 ---
 
@@ -133,14 +131,25 @@ flowchart TB
 
 * **Underlay Routing (Direct Internet Access):**
   * `HQ-EDGE-01`: Static default route pointing to ISP1 (`203.0.113.1`).
+  * `HQ-EDGE-02`: Static default route pointing to ISP1 (`203.0.113.5`).
   * `BR-EDGE-01`: Static default route pointing to ISP2 (`198.51.100.1`) for split-tunnel local breakout, bypassing the corporate GRE tunnel for general web traffic.
 * **Overlay GRE Tunnel:**
   * Point-to-Point GRE connecting `HQ-EDGE-01` and `BR-EDGE-01`.
+  * Point-to-Point GRE connecting `HQ-EDGE-02` and `BR-EDGE-01`.
   * TCP Maximum Segment Size (MSS) clamped to `1436` bytes and MTU set to `1476` to mitigate packet fragmentation across the 24-byte GRE encapsulation overhead.
-* **IGP Design (OSPF Area 0):**
-  * Dynamic peering across HQ Core, HQ Edge, and over the `Tunnel0` interface.
-  * **Passive-Interface Policy:** Hellos suppressed on the edge DMZ segment (`Gi0/2`); explicitly unsuppressed on transit and tunnel links.
-  * **Route Injection:** `HQ-EDGE-01` originates a default route (`default-information originate always`) to provide Internet reachability for the Core switch. The Branch router ignores this Type 5 LSA due to its local administrative distance priority.
+* **IGP Design (Hierarchical Multi-Area OSPF):**
+  * **Area Boundaries & ABR Placement:**
+    * **Backbone (Area 0):** Confined strictly to the HQ campus interior, encompassing `HQ-CORE-01`, the internal VLANs, and the point-to-point routed transit links (`10.255.0.0/30` and `10.255.0.4/30`) up to `HQ-EDGE-01` and `HQ-EDGE-02`.
+    * **Branch & WAN Transit (Area 1):** Spans both overlay GRE interfaces (`Tunnel0` on `10.254.0.0/30` and `Tunnel1` on `10.254.0.4/30`) and the branch access network (`10.20.10.0/24`) on `BR-EDGE-01`.
+    * **ABR Roles:** `HQ-EDGE-01` and `HQ-EDGE-02` serve as the **Area Border Routers (ABRs)**, bridging internal campus Area 0 with WAN overlay Area 1. `BR-EDGE-01` operates purely as an internal Area 1 router.
+  * **Passive-Interface Policy:**
+    * **Campus Switched Virtual Interfaces (SVIs):** OSPF Hellos are suppressed on logical gateway interfaces (`passive-interface Vlan10`, `Vlan20`, and `Vlan99`) on `HQ-CORE-01`. This advertises campus access subnets into Area 0 while preventing rogue neighbor adjacencies or route poisoning from compromised host access ports.
+    * **Perimeter & Remote Access Ports:** Hellos are suppressed on host-facing router boundaries (HQ Perimeter DMZ `Gi0/2` on `HQ-EDGE-01` and Branch LAN `Gi0/1` on `BR-EDGE-01`).
+    * **Adjacency Preservation:** Hellos remain active across point-to-point campus transit interconnects GRE tunnels `Tunnel0` (`10.255.0.0/30`), `Tunnel1` (`10.255.0.4/30`).
+  * **Inter-Area Propagation & Default Routing:**
+    * `HQ-EDGE-01` and `HQ-EDGE-02` translate Area 0 campus and DMZ prefixes into Type 3 Summary LSAs and inject them across the GRE tunnels into Area 1.
+    * `HQ-EDGE-01` originates an external Type 5 default route (`default-information originate always`) to provide outbound Internet transit for `HQ-CORE-01`.
+    * `BR-EDGE-01` retains its local Direct Internet Access (DIA) via a local static default route (`0.0.0.0/0` via `ISP2`), using longest-prefix match on Type 3 inter-area routes (`10.10.0.0/16`, `172.16.50.0/24`) to steer corporate traffic across the GRE tunnels back into Area 0.
 
 ---
 
