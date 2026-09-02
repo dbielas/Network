@@ -14,38 +14,85 @@ The infrastructure enforces:
 
 ## 2. Logical Topology & Addressing Plan
 
-### Physical Interface & VLAN Layout
+### Network Topology Diagram
 
-```text
-                                  +-------------------+
-                                  |    ISP Gateway    |
-                                  |   (Public WAN)    |
-                                  +---------+---------+
-                                            |
-                         203.0.113.0/30     |     198.51.100.0/30
-                     +----------------------+----------------------+
-                     |                                             |
-             Gi0/0   v                                             v   Gi0/0
-     +-----------------------+                             +-----------------------+
-     |      HQ-EDGE-01       |<===========================>|      BR-EDGE-01       |
-     +---+---------------+---+   Tunnel0: 192.168.100.0/30 +-----------+-----------+
-   Gi0/2 |               | Gi0/1 (10.10.0.1/30)                        | Gi0/1 (10.20.10.1/24)
-         v               v                                             v
-   +-----------+   +-----------+                                 +-----------+
-   |    DMZ    |   | HQ-CORE-01|                                 | BR-ACC-01 |
-   |172.16.50.0|   +-----+-----+                                 +-----+-----+
-   +-----------+         |                                             |
-                    Trunk / EtherChannel                               v
-                     +---+---+                                     Branch PCs
-                     |       |
-                     v       v
-               +-----------+-----------+
-               | HQ-ACC-01 | HQ-ACC-02 |
-               +-----+-----+-----+-----+
-                     |           |
-                     +-----+-----+
-                           v
-                       Campus PCs
+```mermaid
+flowchart TB
+    %% WAN / ISP Infrastructure
+    subgraph WAN_CLOUD["Public WAN & Service Providers"]
+        direction TB
+        ISP1["ISP1 (AS 65100)<br>ISR4331"]
+        ISP2["ISP2 (AS 65200)<br>ISR4331"]
+        INET_SRV["INET-WEB-01<br>8.8.8.0/24"]
+        
+        ISP1 <-->|"eBGP: 172.16.0.0/30"| ISP2
+        ISP2 --- INET_SRV
+    end
+
+    %% HQ Site - OSPF Area 0
+    subgraph AREA_0["HQ Campus (OSPF Area 0)"]
+        direction TB
+        
+        subgraph DMZ_ZONE["DMZ"]
+            DMZ_SRV["HQ-DMZ-SRV-01<br>Server-PT"]
+        end
+
+        HQ_EDGE_01["HQ-EDGE-01<br>ISR4331"]
+        HQ_EDGE_02["HQ-EDGE-02<br>ISR4331"]
+        HQ_CORE_01["HQ-CORE-01<br>3650-24PS"]
+        
+        HQ_ACC_01["HQ-ACC-01<br>2960-24TT"]
+        HQ_ACC_02["HQ-ACC-02<br>2960-24TT"]
+        
+        PC_HQ_01["PC-HQ-01<br>10.10.10.0/24 (VLAN 10)"]
+        HQ_SRV_01["HQ-SRV-01<br>10.10.99.0/24 (VLAN 99)"]
+
+        %% DMZ Connection
+        DMZ_SRV <-->|"172.16.50.0/24"| HQ_EDGE_01
+
+        %% Edge to Core Routed Links
+        HQ_EDGE_01 <-->|"10.255.0.0/30"| HQ_CORE_01
+        HQ_EDGE_02 <-->|"10.255.0.4/30"| HQ_CORE_01
+
+        %% Core to Access EtherChannels
+        HQ_CORE_01 <-->|"Po1"| HQ_ACC_01
+        HQ_CORE_01 <-->|"Po2"| HQ_ACC_02
+
+        %% Access to Hosts
+        HQ_ACC_01 --- PC_HQ_01
+        HQ_ACC_02 --- HQ_SRV_01
+    end
+
+    %% Branch Site - Area 1
+    subgraph AREA_1["Branch Site (Area 1)"]
+        direction TB
+        BR_EDGE_01["BR-EDGE-01<br>ISR4331"]
+        BR_ACC_01["BR-ACC-01<br>2960-24TT"]
+        PC1["PC1<br>PC-PT"]
+
+        BR_EDGE_01 <-->|"10.20.10.0/24"| BR_ACC_01
+        BR_ACC_01 --- PC1
+    end
+
+    %% Physical WAN Attachments
+    HQ_EDGE_01 <-->|"203.0.113.0/30"| ISP1
+    HQ_EDGE_02 <-->|"203.0.113.4/30"| ISP1
+    ISP2 <-->|"198.51.100.0/30"| BR_EDGE_01
+
+    %% Overlay GRE Tunnels
+    HQ_EDGE_01 -.->|"Tunnel0: 10.254.0.0/30"| BR_EDGE_01
+    HQ_EDGE_02 -.->|"Tunnel1: 10.254.0.4/30"| BR_EDGE_01
+
+    %% Styling
+    classDef area0 fill:#b4a3ff,stroke:#4b3869,stroke-width:2px;
+    classDef area1 fill:#70d6e0,stroke:#008891,stroke-width:2px;
+    classDef dmz fill:#f38181,stroke:#e84545,stroke-width:2px;
+    classDef wan fill:#70e0bf,stroke:#709fb0,stroke-width:1px,stroke-dasharray: 5 5;
+
+    class AREA_0 area0;
+    class AREA_1 area1;
+    class DMZ_ZONE dmz;
+    class WAN_CLOUD wan;
 ```
 
 ### IP Addressing Schema
