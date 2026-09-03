@@ -242,6 +242,15 @@ ip access-list extended DMZ_RESTRICT
 * **Workaround Implemented:** DHCP Snooping disabled globally across the emulation environment. Static IP assignments and unrestricted L2 forwarding applied to facilitate functional verification of Layer 3 architectures.
 * **Production Deployment Requirement:** On physical hardware, configure `no ip dhcp snooping information option` on access switches, apply `ip dhcp snooping trust` directly on Port-Channel logical interfaces, and deploy `allow-untrusted` on Core uplinks to normalize Option 82 processing.
 
+* ### ADR: Split-Horizon DNS & Emulation Resolver Boundaries
+
+* **Context:** Internal clients require resolution of DMZ resources via internal IP addresses (`172.16.50.10`) to prevent NAT hairpinning and TCP resets on `HQ-EDGE-01`, while external internet clients resolve the same FQDN to public NAT addresses (`203.0.113.2`).
+* **Observed Limitation:** Cisco Packet Tracer DNS services do not support recursive querying, conditional forwarders, or BIND/Windows-style split-brain DNS views. A single server cannot dynamically forward external requests to public root/ISP resolvers (`8.8.8.8`).
+* **Workaround Implemented:** Internal and external DNS authorities are isolated:
+  * `HQ-SRV-01` (`10.10.99.10`) serves as the authoritative resolver for internal campus hosts with direct RFC 1918 records.
+  * `INET-WEB-01` / ISP DNS (`8.8.8.8`) serves public WAN hosts with external NAT mappings.
+* **Production Deployment Requirement:** Deploy enterprise DNS (Active Directory / BIND / Infoblox) configured with split-view zones or upstream conditional forwarders to route external queries recursively while serving local RFC 1918 addresses to campus VLANs.
+
 ---
 
 ## 7. Verification Matrix & Evidence Collection
