@@ -213,10 +213,13 @@ ip access-list extended OUTSIDE_IN
  permit gre host 198.51.100.2 host 203.0.113.2
  remark Allow established TCP sessions
  permit tcp any any established
- remark Inbound Web Access to DMZ Server
+ remark Inbound Web Access to DMZ Server (Pre-NAT and Post-NAT support)
+ permit tcp any host 203.0.113.2 eq www
+ permit tcp any host 203.0.113.2 eq 443
  permit tcp any host 172.16.50.10 eq www
  permit tcp any host 172.16.50.10 eq 443
- remark Permit ICMP Echo-Reply
+ remark Allow External Ping to Outside WAN IP (Troubleshooting/SLA)
+ permit icmp any host 203.0.113.2 echo
  permit icmp any any echo-reply
  remark Explicit Deny All
  deny ip any any
@@ -249,7 +252,7 @@ ip access-list extended DMZ_RESTRICT
 * **Workaround Implemented:** Internal and external DNS authorities are isolated:
   * `HQ-SRV-01` (`10.10.99.10`) serves as the authoritative resolver for internal campus hosts with direct RFC 1918 records.
   * `INET-WEB-01` / ISP DNS (`8.8.8.8`) serves public WAN hosts with external NAT mappings.
-* **Production Deployment Requirement:** Deploy enterprise DNS (Active Directory / BIND / Infoblox) configured with split-view zones or upstream conditional forwarders to route external queries recursively while serving local RFC 1918 addresses to campus VLANs.
+* **Production Deployment Requirement:** Deploy enterprise DNS (Active Directory / BIND) configured with split-view zones or upstream conditional forwarders to route external queries recursively while serving local RFC 1918 addresses to campus VLANs.
 
 ---
 
