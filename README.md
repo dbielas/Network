@@ -161,89 +161,78 @@ flowchart TB
 
 The enterprise perimeter enforces a strict stateful boundary between RFC 1918 private campus space, isolated service segments, and untrusted transit networks:
 
-* **HQ-EDGE-01 (Primary WAN & DMZ Gateway):**
-  * `GigabitEthernet0/0` (Public WAN 1 to ISP1 - `203.0.113.2/30`): **`ip nat outside`**
-  * `GigabitEthernet0/1` (Transit to HQ-CORE-01 - `10.255.0.1/30`): **`ip nat inside`**
-  * `GigabitEthernet0/2` (Isolated DMZ Segment - `172.16.50.1/24`): **`ip nat inside`**
-  * `Tunnel0` (GRE Overlay to Branch - `10.254.0.1/30`): Unmarked (bypasses NAT processing; routed natively via OSPF Area 1)
+* **HQ-EDGE-01 (Primary WAN, Overlay & DMZ Gateway):**
+  * `GigabitEthernet0/0/0` (WAN 1 to ISP1 - `203.0.113.2/30`): **`ip nat outside`**
+  * `GigabitEthernet0/0/1` (Transit to HQ-CORE-01 - `10.255.0.1/30`): **`ip nat inside`**
+  * `GigabitEthernet0/0/2` (DMZ Segment - `172.16.50.1/24`): **`ip nat inside`**
+  * `Tunnel0` (GRE Overlay to Branch - `10.254.0.1/30`): Bypasses NAT processing; routed natively via OSPF Area 1
 
-* **HQ-EDGE-02 (Redundant WAN Gateway):**
-  * `GigabitEthernet0/0` (Public WAN 2 to ISP1 - `203.0.113.6/30`): **`ip nat outside`**
-  * `GigabitEthernet0/1` (Transit to HQ-CORE-01 - `10.255.0.5/30`): **`ip nat inside`**
-  * `Tunnel1` (GRE Overlay to Branch - `10.254.0.5/30`): Unmarked (bypasses NAT processing)
+* **HQ-EDGE-02 (Redundant WAN & Overlay Gateway):**
+  * `GigabitEthernet0/0/0` (WAN 2 to ISP1 - `203.0.113.6/30`): **`ip nat outside`**
+  * `GigabitEthernet0/0/1` (Transit to HQ-CORE-01 - `10.255.0.6/30`): **`ip nat inside`**
+  * `GigabitEthernet0/0/2`: Disabled (`shutdown`)
+  * `Tunnel1` (GRE Overlay to Branch - `10.254.0.5/30`): Bypasses NAT processing; routed natively via OSPF Area 1
 
 ---
 
-### 5.2 Translation Policies & Logic
+### 5.2 Translation Policies & Configurations
 
-#### A. Port-Forwarded Static NAT (DMZ Inbound Services)
-Public HTTP/HTTPS services hosted on `HQ-DMZ-SRV-01` (`172.16.50.10`) are exposed through `HQ-EDGE-01`'s primary public WAN interface IP via port address translation:
+#### A. Port-Forwarded Static NAT (DMZ Web Services)
+Public HTTP and HTTPS access to `HQ-DMZ-SRV-01` (`172.16.50.10`) is statically mapped to the primary outside IP (`203.0.113.2`) on `HQ-EDGE-01`:
+
 ```cisco
-! HQ-EDGE-01 Only:
+! HQ-EDGE-01:
 ip nat inside source static tcp 172.16.50.10 80 203.0.113.2 80
 ip nat inside source static tcp 172.16.50.10 443 203.0.113.2 443
 ```
-* Inbound requests hitting `203.0.113.2:80/443` on the outside interface are translated to `172.16.50.10` and routed down the isolated DMZ link.
-* Inter-site traffic from Branch (`10.20.10.0/24`) or internal campus users (`10.10.10.0/24`) routes directly to the private DMZ address (`172.16.50.10`) via OSPF without NAT hairpinning.
 
-#### B. Dynamic PAT Overload with Inter-Site NAT Exemption (No-NAT)
-Outbound campus Internet access is overloaded onto the respective edge router's WAN IP. To prevent state table pollution and protect inter-site communications during link failover, an extended NAT ACL enforces **NAT Exemption** for internal enterprise prefixes:
+#### B. Dynamic PAT Overload & NAT Exemption
+Campus internet breakout uses dynamic PAT bound to the primary WAN interface. Inter-site communications between HQ (`10.10.0.0/16`) and Branch (`10.20.0.0/16`) are explicitly exempted via `deny` statements to prevent address rewriting if traffic falls through to the default route:
 
 ```cisco
-! Applied on both HQ-EDGE-01 and HQ-EDGE-02:
+! Applied on HQ-EDGE-01 and HQ-EDGE-02:
 ip access-list extended ACL_HQ_NAT
- remark === 1. NAT EXEMPTION (DO NOT TRANSLATE CORPORATE TRAFFIC) ===
  deny ip 10.10.0.0 0.0.255.255 10.20.0.0 0.0.255.255
- deny ip 172.16.50.0 0.0.0.255 10.20.0.0 0.0.255.255
- remark === 2. DYNAMIC PAT FOR OUTBOUND INTERNET ACCESS ===
  permit ip 10.10.0.0 0.0.255.255 any
- permit ip 172.16.50.0 0.0.0.255 any
+ permit ip 10.20.0.0 0.0.255.255 any
 !
-! Binding PAT to the respective active egress WAN interface:
-! HQ-EDGE-01:
-ip nat inside source list ACL_HQ_NAT interface GigabitEthernet0/0 overload
-! HQ-EDGE-02:
-ip nat inside source list ACL_HQ_NAT interface GigabitEthernet0/0 overload
+! PAT Overload Interface Binding:
+ip nat inside source list ACL_HQ_NAT interface GigabitEthernet0/0/0 overload
 ```
-
-* **Exemption Mechanics:** If a tunnel interface goes down and inter-site traffic falls through to the default route (`0.0.0.0/0`), the `deny` actions prevent the router from rewriting private source IPs to public IPs. Untranslated packets are discarded harmlessly at the ISP upstream boundary (RFC 1918 filter) rather than establishing blackholed NAT translations.
 
 ---
 
-### 5.3 Perimeter Access Control Lists (Directional Filtering)
+### 5.3 Perimeter Access Control Policies
 
 #### A. Inbound WAN Perimeter Policy (`OUTSIDE_IN`)
-Applied to the WAN interfaces (`Gi0/0`) on `HQ-EDGE-01` and `HQ-EDGE-02` inbound (`ip access-group OUTSIDE_IN in`):
+Bound inbound to `GigabitEthernet0/0/0` to restrict ingress traffic from untrusted networks:
 
 ```cisco
 ip access-list extended OUTSIDE_IN
- remark === 1. INFRASTRUCTURE & TUNNEL TRANSIT ===
- permit gre host 198.51.100.2 host 203.0.113.2    ! (On EDGE-02: host 198.51.100.2 host 203.0.113.6)
- remark === 2. INBOUND PUBLIC DMZ SERVICES ===
- permit tcp any host 172.16.50.10 eq 80            ! Packet Tracer evaluates post-NAT inside IP
- permit tcp any host 172.16.50.10 eq 443
- remark === 3. STATEFUL RETURN TRAFFIC ===
+ remark Permit GRE from Branch Public IP
+ permit gre host 198.51.100.2 host 203.0.113.2
+ remark Allow established TCP sessions
  permit tcp any any established
+ remark Inbound Web Access to DMZ Server
+ permit tcp any host 172.16.50.10 eq www
+ permit tcp any host 172.16.50.10 eq 443
+ remark Permit ICMP Echo-Reply
  permit icmp any any echo-reply
- remark === 4. EXPLICIT PERIMETER DROP ===
+ remark Explicit Deny All
  deny ip any any
 ```
-* **GRE Protection:** Only permits IP Protocol 47 sourced from the verified Branch Edge WAN address (`198.51.100.2`).
-* **Direct Access Block:** All arbitrary inbound traffic targeting campus subnets (`10.10.0.0/16`) or core transit links is blocked.
 
 #### B. DMZ Lateral Movement Containment (`DMZ_RESTRICT`)
-Applied to `HQ-EDGE-01` interface `Gi0/2` inbound (`ip access-group DMZ_RESTRICT in`) to enforce zero-trust segmentation between the DMZ and internal operations:
+Bound inbound to `GigabitEthernet0/0/2` on `HQ-EDGE-01` to isolate DMZ services from corporate enterprise subnets:
 
 ```cisco
 ip access-list extended DMZ_RESTRICT
- remark === 1. MITIGATE LATERAL ATTACKS (BLOCK DMZ TO INTERNAL NETWORKS) ===
- deny ip 172.16.50.0 0.0.0.255 10.10.0.0 0.0.255.255   ! Block HQ Campus (VLAN 10, 20, 99)
- deny ip 172.16.50.0 0.0.0.255 10.20.0.0 0.0.255.255   ! Block Branch Office (VLAN 10)
- deny ip 172.16.50.0 0.0.0.255 10.255.0.0 0.0.255.255  ! Block Core Transit Interconnects
- remark === 2. PERMIT DMZ OUTBOUND INTERNET / UPDATES ===
- permit ip 172.16.50.0 0.0.0.255 any
+ remark Block DMZ from initiating sessions to HQ Campus & Branch
+ deny ip 172.16.50.0 0.0.0.255 10.10.0.0 0.0.255.255
+ deny ip 172.16.50.0 0.0.0.255 10.20.0.0 0.0.255.255
+ remark Allow DMZ outbound access (updates/external dependencies)
+ permit ip any any
 ```
-* **Compromise Containment:** If `HQ-DMZ-SRV-01` is compromised via an external exploit, the host cannot initiate TCP handshakes, SSH sessions, or lateral reconnaissance scans against internal workstations, active directory, or core switches.
 ---
 
 ## 6. Architecture Decision Record (ADR): DHCP Snooping
