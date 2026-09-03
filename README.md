@@ -17,82 +17,100 @@ The infrastructure enforces:
 ### Network Topology Diagram
 
 ```mermaid
-flowchart TB
-    %% WAN / ISP Infrastructure
+flowchart LR
+    %% ==========================================
+    %% LEFT COLUMN: Enterprise Sites (HQ Top, Branch Bottom)
+    %% ==========================================
+    subgraph ENTERPRISE_SITES[" "]
+        direction TB
+
+        %% TOP-LEFT: HQ Campus - Area 0
+        subgraph AREA_0["HQ Campus (OSPF Area 0)"]
+            direction TB
+            
+            subgraph DMZ_ZONE["DMZ Segment"]
+                DMZ_SRV["HQ-DMZ-SRV-01<br>172.16.50.10"]
+            end
+
+            HQ_EDGE_01["HQ-EDGE-01<br>ISR4331 (1.1.1.1)"]
+            HQ_EDGE_02["HQ-EDGE-02<br>ISR4331 (4.4.4.4)"]
+            HQ_CORE_01["HQ-CORE-01<br>WS-C3650 (2.2.2.2)"]
+            
+            HQ_ACC_01["HQ-ACC-01<br>WS-C2960"]
+            HQ_ACC_02["HQ-ACC-02<br>WS-C2960"]
+            
+            PC_HQ_01["PC-HQ-01<br>10.10.10.50 (VLAN 10)"]
+            HQ_SRV_01["HQ-SRV-01<br>10.10.99.10 (VLAN 99)"]
+
+            %% DMZ Attachment
+            DMZ_SRV <-->|"172.16.50.0/24"| HQ_EDGE_01
+
+            %% Routed Links & EtherChannels
+            HQ_EDGE_01 <-->|"10.255.0.0/30"| HQ_CORE_01
+            HQ_EDGE_02 <-->|"10.255.0.4/30"| HQ_CORE_01
+            HQ_CORE_01 <-->|"Po1"| HQ_ACC_01
+            HQ_CORE_01 <-->|"Po2"| HQ_ACC_02
+
+            %% Host Links
+            HQ_ACC_01 --- PC_HQ_01
+            HQ_ACC_02 --- HQ_SRV_01
+        end
+
+        %% BOTTOM-LEFT: Branch Site - Area 1
+        subgraph AREA_1["Branch Site (OSPF Area 1)"]
+            direction TB
+            BR_EDGE_01["BR-EDGE-01<br>ISR4331 (3.3.3.3)"]
+            BR_ACC_01["BR-ACC-01<br>WS-C2960"]
+            PC1["PC-BR-01<br>10.20.10.50 (VLAN 10)"]
+
+            BR_EDGE_01 <-->|"10.20.10.0/24"| BR_ACC_01
+            BR_ACC_01 --- PC1
+        end
+
+        %% Invisible Rank Enforcer (Forces Area 0 Top, Area 1 Bottom)
+        HQ_CORE_01 ~~~ BR_EDGE_01
+    end
+
+    %% ==========================================
+    %% RIGHT COLUMN: Public WAN & Providers
+    %% ==========================================
     subgraph WAN_CLOUD["Public WAN & Service Providers"]
         direction TB
-        ISP1["ISP1 (AS 65100)<br>ISR4331"]
-        ISP2["ISP2 (AS 65200)<br>ISR4331"]
-        INET_SRV["INET-WEB-01<br>8.8.8.0/24"]
+        ISP1["ISP1 (AS 65100)<br>203.0.113.1 / 203.0.113.5"]
+        ISP2["ISP2 (AS 65200)<br>198.51.100.1"]
+        INET_SRV["INET-WEB-01<br>8.8.8.10 / 8.8.8.8 (DNS)"]
         
         ISP1 <-->|"eBGP: 172.16.0.0/30"| ISP2
         ISP2 --- INET_SRV
     end
 
-    %% HQ Site - OSPF Area 0
-    subgraph AREA_0["HQ Campus (OSPF Area 0)"]
-        direction TB
-        
-        subgraph DMZ_ZONE["DMZ"]
-            DMZ_SRV["HQ-DMZ-SRV-01<br>Server-PT"]
-        end
+    %% ==========================================
+    %% Physical WAN Attachments (Left to Right)
+    %% ==========================================
+    HQ_EDGE_01 <-->|"WAN 1: 203.0.113.0/30"| ISP1
+    HQ_EDGE_02 <-->|"WAN 2: 203.0.113.4/30"| ISP1
+    BR_EDGE_01 <-->|"DIA: 198.51.100.0/30"| ISP2
 
-        HQ_EDGE_01["HQ-EDGE-01<br>ISR4331"]
-        HQ_EDGE_02["HQ-EDGE-02<br>ISR4331"]
-        HQ_CORE_01["HQ-CORE-01<br>3650-24PS"]
-        
-        HQ_ACC_01["HQ-ACC-01<br>2960-24TT"]
-        HQ_ACC_02["HQ-ACC-02<br>2960-24TT"]
-        
-        PC_HQ_01["PC-HQ-01<br>10.10.10.0/24 (VLAN 10)"]
-        HQ_SRV_01["HQ-SRV-01<br>10.10.99.0/24 (VLAN 99)"]
+    %% ==========================================
+    %% Overlay GRE Tunnels (Vertical Campus to Branch)
+    %% ==========================================
+    HQ_EDGE_01 -.->|"Tunnel0 (10.254.0.0/30)"| BR_EDGE_01
+    HQ_EDGE_02 -.->|"Tunnel1 (10.254.0.4/30)"| BR_EDGE_01
 
-        %% DMZ Connection
-        DMZ_SRV <-->|"172.16.50.0/24"| HQ_EDGE_01
-
-        %% Edge to Core Routed Links
-        HQ_EDGE_01 <-->|"10.255.0.0/30"| HQ_CORE_01
-        HQ_EDGE_02 <-->|"10.255.0.4/30"| HQ_CORE_01
-
-        %% Core to Access EtherChannels
-        HQ_CORE_01 <-->|"Po1"| HQ_ACC_01
-        HQ_CORE_01 <-->|"Po2"| HQ_ACC_02
-
-        %% Access to Hosts
-        HQ_ACC_01 --- PC_HQ_01
-        HQ_ACC_02 --- HQ_SRV_01
-    end
-
-    %% Branch Site - Area 1
-    subgraph AREA_1["Branch Site (Area 1)"]
-        direction TB
-        BR_EDGE_01["BR-EDGE-01<br>ISR4331"]
-        BR_ACC_01["BR-ACC-01<br>2960-24TT"]
-        PC1["PC1<br>PC-PT"]
-
-        BR_EDGE_01 <-->|"10.20.10.0/24"| BR_ACC_01
-        BR_ACC_01 --- PC1
-    end
-
-    %% Physical WAN Attachments
-    HQ_EDGE_01 <-->|"203.0.113.0/30"| ISP1
-    HQ_EDGE_02 <-->|"203.0.113.4/30"| ISP1
-    ISP2 <-->|"198.51.100.0/30"| BR_EDGE_01
-
-    %% Overlay GRE Tunnels
-    HQ_EDGE_01 -.->|"Tunnel0: 10.254.0.0/30"| BR_EDGE_01
-    HQ_EDGE_02 -.->|"Tunnel1: 10.254.0.4/30"| BR_EDGE_01
-
-    %% Styling
-    classDef area0 fill:#b4a3ff,stroke:#4b3869,stroke-width:2px;
-    classDef area1 fill:#70d6e0,stroke:#008891,stroke-width:2px;
-    classDef dmz fill:#f38181,stroke:#e84545,stroke-width:2px;
-    classDef wan fill:#70e0bf,stroke:#709fb0,stroke-width:1px,stroke-dasharray: 5 5;
+    %% ==========================================
+    %% GitHub Dark Mode Optimized Palette
+    %% ==========================================
+    classDef area0 fill:#161f30,stroke:#388bfd,stroke-width:1.5px,color:#e6edf3;
+    classDef area1 fill:#0d2826,stroke:#1f6feb,stroke-width:1.5px,color:#e6edf3;
+    classDef dmz fill:#2c1519,stroke:#f85149,stroke-width:1.5px,color:#e6edf3;
+    classDef wan fill:#161b22,stroke:#8b949e,stroke-width:1.5px,stroke-dasharray: 4 4,color:#e6edf3;
+    classDef sites fill:none,stroke:none;
 
     class AREA_0 area0;
     class AREA_1 area1;
     class DMZ_ZONE dmz;
     class WAN_CLOUD wan;
+    class ENTERPRISE_SITES sites;
 ```
 
 ### IP Addressing Schema
@@ -152,7 +170,19 @@ flowchart TB
     * `HQ-EDGE-01` and `HQ-EDGE-02` translate Area 0 campus and DMZ prefixes into Type 3 Summary LSAs and inject them across the GRE tunnels into Area 1.
     * `HQ-EDGE-01` originates an external Type 5 default route (`default-information originate always`) to provide outbound Internet transit for `HQ-CORE-01`.
     * `BR-EDGE-01` retains its local Direct Internet Access (DIA) via a local static default route (`0.0.0.0/0` via `ISP2`), using longest-prefix match on Type 3 inter-area routes (`10.10.0.0/16`, `172.16.50.0/24`) to steer corporate traffic across the GRE tunnels back into Area 0.
+### ADR: Deferral of Dual-Stack IPv6 Deployment
 
+* **Status:** Deferred / Planned for Phase 2
+* **Context:** The enterprise perimeter, campus transit, and overlay GRE infrastructure currently operate exclusively on an IPv4 substrate utilizing hierarchical OSPFv2 and dynamic PAT with NAT exemption.
+* **Decision:** IPv6 dual-stacking was deliberately excluded from the current deployment scope to prioritize control-plane stability, deterministic routing between Area 0 and Area 1, and fine-grained stateful perimeter boundary ACLs.
+* **Operational Impact & Trade-Offs:**
+  * Avoids running dual routing engines (OSPFv2 + OSPFv3) across resource-constrained branch and edge platforms.
+  * Preserves single-stack GRE encapsulation without the overhead of IPv6 transport headers or secondary tunnel interfaces.
+  * Relies on standard IPv4 PAT overload at WAN boundaries to preserve public address space.
+* **Phase 2 Implementation Roadmap:**
+  * Enable `ipv6 unicast-routing` globally on edge, core, and branch nodes.
+  * Deploy OSPFv3 (Address Family mode) across transit links (`10.255.0.0/30` equivalent `/126` or `/64` subnets) and tunnel overlays.
+  * Transition perimeter security from IPv4 NAT overload to stateful IPv6 inspection filtering (ZBF / reflexive ACLs), permitting outbound traffic while enforcing default-deny on unsolicited inbound Global Unicast Address (GUA) sessions.
 ---
 
 ## 5. Perimeter Security, NAT & DMZ Policy
