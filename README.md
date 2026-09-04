@@ -288,13 +288,108 @@ ip access-list extended DMZ_RESTRICT
 
 ## 7. Verification Matrix & Evidence Collection
 
-| Test Domain | Device Under Test | Command / Probe | Target Success State |
-| :--- | :--- | :--- | :--- |
-| **L2 Switching** | `HQ-CORE-01` | `show spanning-tree root` | Local switch ID matches Root for VLANs 10, 20, 99 |
-| **EtherChannel** | `HQ-ACC-01` | `show etherchannel summary` | Bundled ports display flag `(P)` in port-channel `(SU)` |
-| **OSPF Adjacency** | `HQ-EDGE-01` | `show ip ospf neighbor` | Full adjacency on Transit (`Gi0/1`) and Tunnel (`Tunnel0`) |
-| **Routing Tables** | `BR-EDGE-01` | `show ip route 0.0.0.0` | Active default path via ISP2 (`198.51.100.1`) with AD 1 |
-| **GRE Data Plane** | `BR-EDGE-01` | `ping 10.10.10.50 source Gi0/1` | 5/5 ICMP success traversing Tunnel0 without packet loss |
-| **Static NAT** | External Host | `curl http://203.0.113.10` | HTTP 200 OK from DMZ server |
-| **DMZ Isolation** | `HQ-DMZ-SRV-01` | `ping 10.10.10.50` | 0/5 ICMP success (Blocked by `DMZ_RESTRICT` ACL) |
-| **NAT Translations** | `HQ-EDGE-01` | `show ip nat translations` | Static mapping active; dynamic overload sessions active |
+### 7.1 Control Plane Verification Artifacts
+
+#### Test CP-01: Spanning Tree Root Bridge Placement & Path Hardening
+* **Objective:** Validate that `HQ-CORE-01` serves as the deterministic 802.1w root bridge for all enterprise VLANs (10, 20, 99) with non-default bridge priority `4096`.
+* **Execution Node:** `HQ-CORE-01`
+
+```text
+HQ-CORE-01#show spanning-tree summary 
+Switch is in rapid-pvst mode
+Root bridge for: DATA_CORP VOICE_GUEST VLAN0099
+Extended system ID           is enabled
+Portfast Default             is enabled
+PortFast BPDU Guard Default  is enabled
+Portfast BPDU Filter Default is disabled
+Loopguard Default            is disabled
+EtherChannel misconfig guard is disabled
+UplinkFast                   is disabled
+BackboneFast                 is disabled
+Configured Pathcost method used is short
+
+Name                   Blocking Listening Learning Forwarding STP Active
+---------------------- -------- --------- -------- ---------- ----------
+VLAN0001                     6         0        0          2          8
+VLAN0010                     6         0        0          2          8
+VLAN0020                     6         0        0          2          8
+VLAN0099                     6         0        0          2          8
+
+---------------------- -------- --------- -------- ---------- ----------
+4 vlans                     24         0        0          8         32               Desg FWD 9         128.28   P2p 
+```
+
+---
+
+#### Test CP-02: Multi-Link Aggregation (L2 EtherChannel Integrity)
+* **Objective:** Confirm LACP/PAgP bundling status across Core-Access trunks (`Po1` and `Po2`) without orphaned physical members.
+* **Execution Nodes:** `HQ-ACC-01` and `HQ-ACC-02`
+
+```text
+HQ-ACC-01#show etherchannel summary
+Flags:  D - down        P - in port-channel
+        I - stand-alone s - suspended
+        H - Hot-standby (LACP only)
+        R - Layer3      S - Layer2
+        U - in use      f - failed to allocate aggregator
+        u - unsuitable for bundling
+        w - waiting to be aggregated
+        d - default port
+
+Number of channel-groups in use: 1
+Number of aggregators:           1
+
+Group  Port-channel  Protocol    Ports
+------+-------------+-----------+----------------------------------------------
+1      Po1(SU)           LACP   Gig0/1(P) Gig0/2(P) 
+
+HQ-ACC-02# show etherchannel summary
+Group  Port-channel  Protocol    Ports
+------+-------------+-----------+----------------------------------------------
+2      Po2(SU)           LACP   Gig0/1(P) Gig0/2(P) 
+```
+
+---
+
+#### Test CP-03: Multi-Area OSPF Adjacency & Interface State
+* **Objective:** Verify `HQ-EDGE-01` establishes `FULL` adjacency simultaneously with `HQ-CORE-01` in Area 0 and `BR-EDGE-01` in Area 1 across `Tunnel0`.
+* **Execution Node:** `HQ-EDGE-01`
+
+```text
+HQ-EDGE-01# show ip ospf neighbor
+
+Neighbor ID     Pri   State           Dead Time   Address         Interface
+2.2.2.2           1   FULL/DR        00:00:34    10.255.0.2      GigabitEthernet0/0/1
+3.3.3.3           0   FULL/  -        00:00:32    10.254.0.2      Tunnel0
+
+HQ-EDGE-01#show ip ospf interface brief
+Interface     PID   Area                     IP Address/Mask          Cost  State  Nbrs F/C
+Gig0/0/2        1   0                      172.16.50.1/255.255.255.0   1       DR  0/0
+Gig0/0/1        1   0                     10.255.0.1/255.255.255.252   1      BDR  0/0
+Tun0            1   1                     10.254.0.1/255.255.255.252   1000 POINT  0/0   1     0               172.16.50.1/24     1     P/I   0/0
+```
+
+---
+
+#### Test CP-04: Inter-Area LSA Synthesis & Branch Routing Table
+* **Objective:** Verify `BR-EDGE-01` populates Area 0 campus and DMZ subnets as Type 3 Inter-Area (`O IA`) routes over `Tunnel0` while preserving its local default gateway via ISP2.
+* **Execution Node:** `BR-EDGE-01`
+
+```text
+BR-EDGE-01#show ip route ospf 
+     10.0.0.0/8 is variably subnetted, 11 subnets, 3 masks
+O IA    10.10.10.0 [110/1002] via 10.254.0.1, 00:02:52, Tunnel0
+O IA    10.10.20.0 [110/1002] via 10.254.0.1, 00:02:52, Tunnel0
+O IA    10.10.99.0 [110/1002] via 10.254.0.1, 00:02:52, Tunnel0
+O IA    10.255.0.0 [110/1001] via 10.254.0.1, 00:25:18, Tunnel0
+O IA    10.255.0.4 [110/1001] via 10.254.0.5, 00:31:16, Tunnel1
+     172.16.0.0/24 is subnetted, 1 subnets
+O IA    172.16.50.0 [110/1001] via 10.254.0.1, 00:36:30, Tunnel0
+
+BR-EDGE-01#show ip route 0.0.0.0 0.0.0.0
+Routing entry for 0.0.0.0/0, supernet
+Known via "static", distance 1, metric 0, candidate default path
+  Routing Descriptor Blocks:
+  * 198.51.100.1
+      Route metric is 0, traffic share count is 1
+```
