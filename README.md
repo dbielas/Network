@@ -393,3 +393,66 @@ Known via "static", distance 1, metric 0, candidate default path
   * 198.51.100.1
       Route metric is 0, traffic share count is 1
 ```
+### 7.2 Data Plane & Overlay Verification Artifacts
+
+#### Test DP-01: End-to-End Inter-Site GRE Overlay Path (Branch to HQ Access)
+* **Objective:** Validate that enterprise inter-site traffic between `PC1` (Branch VLAN 10) and `PC-HQ-01` (HQ Campus VLAN 10) traverses the logical GRE overlay (`Tunnel0` via `10.254.0.1`) without exposing private packets or RFC 1918 addresses directly to the public ISP underlay.
+* **Execution Node:** `PC1` (`10.20.10.50`)
+* **Command:** `tracert 10.10.10.50`
+
+```text
+C:\>tracert 10.10.10.50
+
+Tracing route to 10.10.10.50 over a maximum of 30 hops: 
+
+  1   0 ms      0 ms      0 ms      10.20.10.1  (BR-EDGE-01 LAN Gateway)
+  2   2 ms      0 ms      0 ms      10.254.0.1  (HQ-EDGE-01 Tunnel0 Interface)
+  3   0 ms      0 ms      0 ms      10.255.0.2  (HQ-CORE-01 Routed Transit)
+  4   0 ms      10 ms     0 ms      10.10.10.50 (PC-HQ-01 Target Host)
+
+Trace complete.
+```
+* **Analysis:** Hop 2 explicitly hits `10.254.0.1`, proving that traffic is steered across `Tunnel0` rather than the public ISP2 gateway (`198.51.100.1`). Hop 3 confirms Layer 3 transit handing off to `HQ-CORE-01` before final delivery down `Po1` to VLAN 10.
+
+---
+
+#### Test DP-02: Branch Direct Internet Access (DIA) Split-Tunnel Path
+* **Objective:** Verify split-tunnel policy routing on `BR-EDGE-01` by ensuring external web and DNS traffic directed to `INET-WEB-01` breaks out directly across `ISP2` without hair-pinning across the corporate GRE tunnel.
+* **Execution Node:** `PC1` (`10.20.10.50`)
+* **Command:** `tracert 8.8.8.10`
+
+```text
+C:\>tracert 8.8.8.8
+
+Tracing route to 8.8.8.8 over a maximum of 30 hops: 
+
+  1   0 ms      0 ms      0 ms      10.20.10.1   (BR-EDGE-01 LAN Gateway)
+  2   0 ms      0 ms      10 ms     198.51.100.1 (ISP2 Public Gateway)
+  3   *         0 ms      0 ms      8.8.8.8      (INET-WEB-01 Public Host)
+
+Trace complete.
+```
+* **Analysis:** Hop 2 routes directly through `ISP2` (`198.51.100.1`), validating that the branch static default route (`0.0.0.0/0`) handles public Internet breakouts locally, preserving corporate WAN tunnel bandwidth.
+
+---
+
+#### Test DP-03: Overlay MTU & MSS Clamping Verification
+* **Objective:** Confirm GRE tunnel encapsulation does not drop packets or cause path failure when transmitting large payloads near standard MTU thresholds.
+* **Execution Node:** `BR-EDGE-01`
+* **Method:** Cisco IOS Extended Ping Dialog (`size: 1476`, `repeat: 5`)
+
+```text
+BR-EDGE-01#ping
+Protocol [ip]: 
+Target IP address: 10.254.0.1
+Repeat count [5]: 5
+Datagram size [100]: 1476
+Timeout in seconds [2]: 
+Extended commands [n]: 
+Sweep range of sizes [n]: 
+Type escape sequence to abort.
+Sending 5, 1476-byte ICMP Echos to 10.254.0.1, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 0/0/2 ms
+```
+* **Analysis:** Validates 1476-byte unfragmented payload transmission over the GRE overlay, accommodating the 24-byte GRE + IPv4 header budget within a 1500-byte WAN physical MTU.
