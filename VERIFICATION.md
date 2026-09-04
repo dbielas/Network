@@ -1,6 +1,6 @@
-## 7. Verification Matrix & Evidence Collection
+## Verification & Evidence Collection
 
-### 7.1 Control Plane Verification Artifacts
+### Control Plane Verification Artifacts
 
 #### Test CP-01: Spanning Tree Root Bridge Placement & Path Hardening
 * **Objective:** Validate that `HQ-CORE-01` serves as the deterministic 802.1w root bridge for all enterprise VLANs (10, 20, 99) with non-default bridge priority `4096`.
@@ -105,7 +105,7 @@ Known via "static", distance 1, metric 0, candidate default path
   * 198.51.100.1
       Route metric is 0, traffic share count is 1
 ```
-### 7.2 Data Plane & Overlay Verification Artifacts
+### Data Plane & Overlay Verification Artifacts
 
 #### Test DP-01: End-to-End Inter-Site GRE Overlay Path (Branch to HQ Access)
 * **Objective:** Validate that enterprise inter-site traffic between `PC1` (Branch VLAN 10) and `PC-HQ-01` (HQ Campus VLAN 10) traverses the logical GRE overlay (`Tunnel0` via `10.254.0.1`) without exposing private packets or RFC 1918 addresses directly to the public ISP underlay.
