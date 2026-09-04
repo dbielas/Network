@@ -168,3 +168,43 @@ Sending 5, 1476-byte ICMP Echos to 10.254.0.1, timeout is 2 seconds:
 Success rate is 100 percent (5/5), round-trip min/avg/max = 0/0/2 ms
 ```
 * **Analysis:** Validates 1476-byte unfragmented payload transmission over the GRE overlay, accommodating the 24-byte GRE + IPv4 header budget within a 1500-byte WAN physical MTU.
+
+### 7.3 Perimeter Security, NAT & Access Control Verification Artifacts
+
+#### Test SEC-01: Dynamic PAT Translations (HQ Campus to Public Internet)
+* **Objective:** Validate that outbound client traffic from HQ Corporate Data (`10.10.10.0/24`) dynamically translates to the outside physical interface IP of `HQ-EDGE-01` via Port Address Translation (PAT).
+* **Execution Node:** `HQ-EDGE-01`
+* **Prerequisite Action:** Initiate web or ICMP traffic from `PC-HQ-01` to `8.8.8.10` (`INET-WEB-01`).
+* **Command:** `show ip nat translations`
+
+```text
+HQ-EDGE-01#show ip nat translations 
+Pro  Inside global     Inside local       Outside local      Outside global
+icmp 203.0.113.2:5     10.10.10.50:5      8.8.8.8:5          8.8.8.8:5
+icmp 203.0.113.2:7     10.10.10.50:7      8.8.8.8:7          8.8.8.8:7
+tcp 203.0.113.2:443    172.16.50.10:443   ---                ---
+tcp 203.0.113.2:80     172.16.50.10:80    ---                ---
+```
+* **Analysis:** Verifies inside local address `10.10.10.50` successfully maps to public inside global address `203.0.113.2` with distinct source ports, preventing RFC 1918 exposure over ISP1.
+
+---
+
+#### Test SEC-02: Public Web Server Ingress Filtering (Perimeter ACL Enforcement)
+* **Objective:** Confirm `HQ-EDGE-01` perimeter ACL allows external HTTP/HTTPS access to DMZ Web Server (`172.16.50.10`) while explicitly denying unauthorized ingress ports (SSH, Telnet, ICMP).
+* **Execution Node:** `HQ-EDGE-01`
+* **Command:** `show access-lists OUTSIDE_IN`
+
+```text
+HQ-EDGE-01#show access-lists
+    Extended IP access list OUTSIDE_IN
+    10 permit gre host 198.51.100.2 host 203.0.113.2 (59 match(es))
+    20 permit tcp any any established (145 match(es))
+    30 permit tcp any host 203.0.113.2 eq www (2 match(es))
+    40 permit tcp any host 203.0.113.2 eq 443 (10 match(es))
+    50 permit tcp any host 172.16.50.10 eq www
+    60 permit tcp any host 172.16.50.10 eq 443
+    70 permit icmp any host 203.0.113.2 echo (12 match(es))
+    80 permit icmp any any echo-reply
+    90 deny ip any any (4 match(es))
+```
+* **Analysis:** Hit counters on Sequence 10/20 validate legitimate DMZ access, Sequence 10 permits GRE encapsulation from the branch endpoint, and Sequence 90 confirms active packet drops for all unsolicited outside inbound traffic.
